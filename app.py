@@ -10,7 +10,6 @@ from bs4 import BeautifulSoup
 import numpy as np
 import time
 import re
-import finnhub
 
 # App configuration
 st.set_page_config(
@@ -38,18 +37,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # App title
-st.markdown('<p class="main-header">📉 PUT Credit Spread Builder with Finnhub API</p>', unsafe_allow_html=True)
-st.markdown("Analyze stocks and build optimal PUT credit spread strategies with real-time data")
-
-# Initialize Finnhub client
-@st.cache_resource
-def init_finnhub_client():
-    # You'll need to get a free API key from https://finnhub.io/
-    # For demo purposes, we'll use a placeholder
-    finnhub_api_key = st.secrets.get("FINNHUB_API_KEY", "demo")
-    return finnhub.Client(api_key=finnhub_api_key)
-
-finnhub_client = init_finnhub_client()
+st.markdown('<p class="main-header">📉 PUT Credit Spread Builder</p>', unsafe_allow_html=True)
+st.markdown("Analyze stocks and build optimal PUT credit spread strategies with enhanced data")
 
 # Sidebar
 with st.sidebar:
@@ -65,10 +54,6 @@ with st.sidebar:
     spread_width = st.slider("Spread Width (%)", min_value=1, max_value=10, value=5)
     
     st.markdown("---")
-    st.markdown("### API Configuration")
-    use_finnhub = st.checkbox("Use Finnhub API for enhanced data", value=True)
-    
-    st.markdown("---")
     st.markdown("### How to Use")
     st.info("This app helps you:")
     st.info("- Analyze stock risks for PUT credit spreads")
@@ -78,82 +63,63 @@ with st.sidebar:
     st.markdown("---")
     st.caption("Disclaimer: This is for educational purposes only. Not financial advice.")
 
-# Function to get company profile from Finnhub
+# Function to get company profile from Yahoo Finance
 @st.cache_data(ttl=3600)
 def get_company_profile(ticker):
     try:
-        profile = finnhub_client.company_profile2(symbol=ticker)
+        stock = yf.Ticker(ticker)
+        info = stock.info
+        profile = {
+            'name': info.get('longName', ticker),
+            'sector': info.get('sector', 'N/A'),
+            'industry': info.get('industry', 'N/A'),
+            'marketCap': info.get('marketCap', 0),
+            'website': info.get('website', 'N/A')
+        }
         return profile
     except:
-        return None
+        return {'name': ticker, 'sector': 'N/A', 'industry': 'N/A', 'marketCap': 0, 'website': 'N/A'}
 
-# Function to get quote from Finnhub
-@st.cache_data(ttl=60)
-def get_quote(ticker):
-    try:
-        quote = finnhub_client.quote(ticker)
-        return quote
-    except:
-        return None
-
-# Function to get financial metrics from Finnhub
+# Function to get financial metrics from Yahoo Finance
 @st.cache_data(ttl=3600)
 def get_financial_metrics(ticker):
     try:
-        metrics = finnhub_client.company_basic_financials(ticker, 'all')
+        stock = yf.Ticker(ticker)
+        info = stock.info
+        
+        metrics = {
+            'peRatio': info.get('trailingPE', 'N/A'),
+            'pbRatio': info.get('priceToBook', 'N/A'),
+            'profitMargin': info.get('profitMargins', 'N/A'),
+            'dividendYield': info.get('dividendYield', 'N/A'),
+            'beta': info.get('beta', 'N/A'),
+            'debtToEquity': info.get('debtToEquity', 'N/A')
+        }
+        
+        # Get financials
+        financials = stock.financials
+        if not financials.empty:
+            try:
+                revenue = financials.loc['Total Revenue'].iloc[0] if 'Total Revenue' in financials.index else 'N/A'
+                net_income = financials.loc['Net Income'].iloc[0] if 'Net Income' in financials.index else 'N/A'
+                metrics['revenue'] = revenue
+                metrics['netIncome'] = net_income
+            except:
+                metrics['revenue'] = 'N/A'
+                metrics['netIncome'] = 'N/A'
+        
         return metrics
     except:
-        return None
-
-# Function to get earnings calendar from Finnhub
-@st.cache_data(ttl=3600)
-def get_earnings_calendar(ticker):
-    try:
-        today = datetime.datetime.now()
-        from_date = today.strftime('%Y-%m-%d')
-        to_date = (today + timedelta(days=60)).strftime('%Y-%m-%d')
-        earnings = finnhub_client.earnings_calendar(_from=from_date, to=to_date, symbol=ticker, international=False)
-        return earnings
-    except:
-        return None
-
-# Function to get news from Finnhub
-@st.cache_data(ttl=3600)
-def get_finnhub_news(ticker):
-    try:
-        today = datetime.datetime.now()
-        from_date = (today - timedelta(days=7)).strftime('%Y-%m-%d')
-        to_date = today.strftime('%Y-%m-%d')
-        news = finnhub_client.company_news(ticker, _from=from_date, to=to_date)
-        return news[:5]  # Return top 5 news items
-    except:
-        return None
+        return {
+            'peRatio': 'N/A', 'pbRatio': 'N/A', 'profitMargin': 'N/A',
+            'dividendYield': 'N/A', 'beta': 'N/A', 'debtToEquity': 'N/A',
+            'revenue': 'N/A', 'netIncome': 'N/A'
+        }
 
 # Function to fetch stock data from alternative sources if yfinance fails
 def fetch_stock_data_alternative(ticker):
     try:
-        # Try to get data from Finnhub first
-        if use_finnhub:
-            quote = get_quote(ticker)
-            if quote and 'c' in quote and quote['c'] > 0:
-                current_price = quote['c']
-                
-                # Create mock historical data based on current price
-                dates = pd.date_range(end=datetime.datetime.now(), periods=30, freq='D')
-                prices = [current_price * (1 + np.random.normal(0, 0.02)) for _ in range(30)]
-                
-                hist = pd.DataFrame({
-                    'Open': prices,
-                    'High': [p * (1 + abs(np.random.normal(0, 0.01))) for p in prices],
-                    'Low': [p * (1 - abs(np.random.normal(0, 0.01))) for p in prices],
-                    'Close': prices,
-                    'Volume': [np.random.randint(1000000, 5000000) for _ in range(30)]
-                }, index=dates)
-                
-                info = {"shortName": ticker, "regularMarketPrice": current_price}
-                return hist, info
-                
-        # Fallback to web scraping if Finnhub fails
+        # Try to get data from Google Finance
         url = f"https://www.google.com/finance/quote/{ticker}"
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
         response = requests.get(url, headers=headers, timeout=10)
@@ -225,45 +191,26 @@ def get_options_chain(ticker, expiration):
     except:
         return None
 
-# Function to get upcoming events with Finnhub integration
+# Function to get upcoming events
 def get_upcoming_events(ticker):
     today = datetime.date.today()
     events = []
     
-    # Try to get earnings date from Finnhub
-    if use_finnhub:
-        try:
-            earnings_data = get_earnings_calendar(ticker)
-            if earnings_data and 'earningsCalendar' in earnings_data:
-                for earning in earnings_data['earningsCalendar']:
-                    if 'date' in earning and earning['date']:
-                        earnings_date = datetime.datetime.strptime(earning['date'], '%Y-%m-%d').date()
-                        if earnings_date > today:
-                            events.append({
-                                'date': earnings_date,
-                                'event': 'Earnings Release',
-                                'importance': 'High'
-                            })
-                            break  # Just get the next earnings
-        except:
-            pass
-    
-    # Try to get real earnings date from yfinance if Finnhub failed
-    if not events:
-        try:
-            stock = yf.Ticker(ticker)
-            earnings_dates = stock.earnings_dates
-            if earnings_dates is not None and not earnings_dates.empty:
-                next_earnings = earnings_dates[earnings_dates.index > pd.Timestamp.today()]
-                if not next_earnings.empty:
-                    next_earnings_date = next_earnings.index[0].date()
-                    events.append({
-                        'date': next_earnings_date,
-                        'event': 'Earnings Release',
-                        'importance': 'High'
-                    })
-        except:
-            pass
+    # Try to get real earnings date if available
+    try:
+        stock = yf.Ticker(ticker)
+        earnings_dates = stock.earnings_dates
+        if earnings_dates is not None and not earnings_dates.empty:
+            next_earnings = earnings_dates[earnings_dates.index > pd.Timestamp.today()]
+            if not next_earnings.empty:
+                next_earnings_date = next_earnings.index[0].date()
+                events.append({
+                    'date': next_earnings_date,
+                    'event': 'Earnings Release',
+                    'importance': 'High'
+                })
+    except:
+        pass
     
     # Add mock events if no real events found
     if not events:
@@ -306,32 +253,35 @@ def get_upcoming_events(ticker):
     events.sort(key=lambda x: x['date'])
     return events
 
-# Function to get recent news with Finnhub integration
+# Function to get recent news with enhanced sources
 @st.cache_data(ttl=3600)
 def get_news(ticker):
-    # Try to get news from Finnhub first
-    if use_finnhub:
-        try:
-            news = get_finnhub_news(ticker)
-            if news:
-                formatted_news = []
-                for item in news:
-                    if 'headline' in item and 'source' in item:
-                        formatted_news.append({
-                            "title": item['headline'],
-                            "publisher": item['source'],
-                            "url": item.get('url', '#')
-                        })
-                return formatted_news[:5]  # Return top 5 news items
-        except:
-            pass
-    
-    # Fallback: Try to get news from yfinance
+    # Try to get news from Yahoo Finance
     try:
         stock = yf.Ticker(ticker)
         news = stock.news
         if news:
             return news[:5]  # Return top 5 news items
+    except:
+        pass
+    
+    # Fallback: Try to get news from Google News
+    try:
+        url = f"https://www.google.com/search?q={ticker}+stock+news&tbm=nws"
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+        response = requests.get(url, headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.content, 'html.parser')
+            news_items = soup.find_all('div', class_='SoaBEf', limit=5)
+            
+            news = []
+            for item in news_items:
+                title = item.find('div', class_='n0jPhd').text
+                publisher = item.find('div', class_='MgUUmf').text
+                news.append({"title": title, "publisher": publisher})
+            
+            return news
     except:
         pass
     
@@ -460,34 +410,30 @@ def generate_pl_curve(current_price, short_strike, long_strike, premium, contrac
 
 # Function to display financial metrics
 def display_financial_metrics(ticker):
-    if not use_finnhub:
-        return
-        
     try:
         metrics = get_financial_metrics(ticker)
-        if metrics and 'metric' in metrics:
+        if metrics:
             st.markdown(f'<p class="section-header">Financial Metrics</p>', unsafe_allow_html=True)
             
-            metric_data = metrics['metric']
             col1, col2, col3 = st.columns(3)
             
             with col1:
-                if 'peNormalizedAnnual' in metric_data:
-                    st.markdown(f'<div class="metric-card"><b>P/E Ratio:</b> {metric_data["peNormalizedAnnual"]:.2f}</div>', unsafe_allow_html=True)
-                if 'pbAnnual' in metric_data:
-                    st.markdown(f'<div class="metric-card"><b>P/B Ratio:</b> {metric_data["pbAnnual"]:.2f}</div>', unsafe_allow_html=True)
+                if metrics['peRatio'] != 'N/A':
+                    st.markdown(f'<div class="metric-card"><b>P/E Ratio:</b> {metrics["peRatio"]:.2f}</div>', unsafe_allow_html=True)
+                if metrics['pbRatio'] != 'N/A':
+                    st.markdown(f'<div class="metric-card"><b>P/B Ratio:</b> {metrics["pbRatio"]:.2f}</div>', unsafe_allow_html=True)
             
             with col2:
-                if 'currentRatioAnnual' in metric_data:
-                    st.markdown(f'<div class="metric-card"><b>Current Ratio:</b> {metric_data["currentRatioAnnual"]:.2f}</div>', unsafe_allow_html=True)
-                if 'quickRatioAnnual' in metric_data:
-                    st.markdown(f'<div class="metric-card"><b>Quick Ratio:</b> {metric_data["quickRatioAnnual"]:.2f}</div>', unsafe_allow_html=True)
+                if metrics['profitMargin'] != 'N/A':
+                    st.markdown(f'<div class="metric-card"><b>Profit Margin:</b> {metrics["profitMargin"]*100:.2f}%</div>', unsafe_allow_html=True)
+                if metrics['dividendYield'] != 'N/A':
+                    st.markdown(f'<div class="metric-card"><b>Dividend Yield:</b> {metrics["dividendYield"]*100:.2f}%</div>', unsafe_allow_html=True)
             
             with col3:
-                if 'roeAnnual' in metric_data:
-                    st.markdown(f'<div class="metric-card"><b>ROE:</b> {metric_data["roeAnnual"]:.2f}%</div>', unsafe_allow_html=True)
-                if 'roaAnnual' in metric_data:
-                    st.markdown(f'<div class="metric-card"><b>ROA:</b> {metric_data["roaAnnual"]:.2f}%</div>', unsafe_allow_html=True)
+                if metrics['beta'] != 'N/A':
+                    st.markdown(f'<div class="metric-card"><b>Beta:</b> {metrics["beta"]:.2f}</div>', unsafe_allow_html=True)
+                if metrics['debtToEquity'] != 'N/A':
+                    st.markdown(f'<div class="metric-card"><b>Debt to Equity:</b> {metrics["debtToEquity"]:.2f}</div>', unsafe_allow_html=True)
     except:
         pass
 
@@ -505,11 +451,8 @@ def main():
         
     current_price = hist['Close'].iloc[-1] if not hist.empty else 0
     
-    # Get Finnhub quote for more accurate current price
-    if use_finnhub:
-        quote = get_quote(ticker)
-        if quote and 'c' in quote and quote['c'] > 0:
-            current_price = quote['c']
+    # Get company profile
+    profile = get_company_profile(ticker)
     
     events = get_upcoming_events(ticker)
     news = get_news(ticker)
@@ -550,13 +493,13 @@ def main():
     with col1:
         st.markdown(f'<p class="section-header">{ticker} Overview</p>', unsafe_allow_html=True)
         
-        # Get company profile from Finnhub
-        if use_finnhub:
-            profile = get_company_profile(ticker)
-            if profile and 'name' in profile:
-                st.write(f"**Company:** {profile['name']}")
-            if profile and 'exchange' in profile:
-                st.write(f"**Exchange:** {profile['exchange']}")
+        # Display company profile
+        if profile and 'name' in profile:
+            st.write(f"**Company:** {profile['name']}")
+        if profile and 'sector' in profile and profile['sector'] != 'N/A':
+            st.write(f"**Sector:** {profile['sector']}")
+        if profile and 'industry' in profile and profile['industry'] != 'N/A':
+            st.write(f"**Industry:** {profile['industry']}")
         
         st.metric("Current Price", f"${current_price:.2f}")
         st.metric("IV Percentile", f"{iv_percentile}%")
@@ -672,8 +615,6 @@ def main():
             # Display news item
             st.write(f"**{title}**")
             st.caption(f"Source: {publisher}")
-            if url != '#':
-                st.markdown(f"[Read more]({url})")
             st.markdown("---")
     
     # Strategy recommendation
